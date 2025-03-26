@@ -1,0 +1,15 @@
+curl "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=GEMINI_API_KEY" \
+-H 'Content-Type: application/json' \
+-X POST \
+-d '{
+  "contents": [{
+    "parts":[{"text": "Explain how AI works"}]
+    }]
+   }'
+
+
+   API:AIzaSyBrPhxFi6k3pjaIrW5b4zaBPxKdgzfniSs
+
+
+
+ELEVENLABS:sk_5fdec04184e583e6ff821b9edfcf42650d35f4442e10ba31
