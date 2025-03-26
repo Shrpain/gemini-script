@@ -7,12 +7,31 @@ import re
 import datetime
 import time
 import urllib.parse  # Thêm thư viện urllib.parse để mã hóa text trong URL
+import unicodedata
+import platform
+
+# ANSI color codes for colored terminal text
+class Colors:
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+    
+# Detect if running on Android/Termux
+is_termux = 'com.termux' in os.environ.get('PREFIX', '')
+is_android = is_termux or 'ANDROID_ROOT' in os.environ
+
 try:
     from gtts import gTTS
     GTTS_AVAILABLE = True
 except ImportError:
     GTTS_AVAILABLE = False
-    print("Thư viện gTTS chưa được cài đặt. Cài đặt bằng lệnh: pip install gtts")
+    print(f"{Colors.RED}Thư viện gTTS chưa được cài đặt. Cài đặt bằng lệnh: pip install gtts{Colors.ENDC}")
 
 def extract_api_key(file_path):
     try:
@@ -614,7 +633,6 @@ def remove_special_characters(text):
     
     # 7. Xử lý các ký tự Unicode đặc biệt
     # Chuyển về dạng NFKD để tách Unicode đặc biệt
-    import unicodedata
     processed_text = unicodedata.normalize('NFKD', processed_text)
     
     # 8. Loại bỏ các thẻ HTML và XML nếu có
@@ -858,6 +876,45 @@ Lưu ý: Nội dung phải thực sự dài và chi tiết, ít nhất 2500 từ
     
     return fallback_response
 
+def play_audio_file(audio_file):
+    """Phát file âm thanh dựa trên nền tảng đang chạy"""
+    if not os.path.exists(audio_file):
+        print(f"{Colors.RED}Lỗi: File âm thanh không tồn tại tại đường dẫn: {audio_file}{Colors.ENDC}")
+        return False
+        
+    try:
+        print(f"{Colors.CYAN}Đang phát file âm thanh: {audio_file}{Colors.ENDC}")
+        
+        if is_termux:
+            # Phát âm thanh trên Termux/Android
+            os.system(f"termux-media-player play {audio_file}")
+            return True
+        elif platform.system() == "Windows":
+            # Phát âm thanh trên Windows
+            os.system(f'start {audio_file}')
+            return True
+        elif platform.system() == "Darwin":  # macOS
+            os.system(f'afplay "{audio_file}"')
+            return True
+        elif platform.system() == "Linux":
+            # Thử nhiều trình phát âm thanh phổ biến
+            players = ['xdg-open', 'mpg123', 'ffplay', 'mplayer', 'vlc']
+            for player in players:
+                try:
+                    os.system(f'{player} "{audio_file}" > /dev/null 2>&1')
+                    return True
+                except:
+                    continue
+                    
+            print(f"{Colors.YELLOW}Không thể tự động phát âm thanh. Vui lòng cài đặt mpg123, ffplay, mplayer hoặc vlc.{Colors.ENDC}")
+            return False
+        else:
+            print(f"{Colors.YELLOW}Không thể tự động phát âm thanh trên hệ điều hành này.{Colors.ENDC}")
+            return False
+    except Exception as e:
+        print(f"{Colors.RED}Lỗi khi phát file âm thanh: {str(e)}{Colors.ENDC}")
+        return False
+
 def main():
     # Default configuration file path
     config_file = "APIvsCURL.txt"
@@ -866,82 +923,191 @@ def main():
     try:
         gemini_api_key = extract_api_key(config_file)
     except Exception as e:
-        print(f"Lỗi khi đọc API key: {str(e)}")
-        print("Vui lòng đảm bảo tệp APIvsCURL.txt tồn tại và chứa khóa Gemini API của bạn.")
+        print(f"{Colors.RED}Lỗi khi đọc API key: {str(e)}{Colors.ENDC}")
+        print(f"{Colors.YELLOW}Vui lòng đảm bảo tệp APIvsCURL.txt tồn tại và chứa khóa Gemini API của bạn.{Colors.ENDC}")
         sys.exit(1)
     
     # Check if gtts is available
     if not GTTS_AVAILABLE:
-        print("CẢNH BÁO: Thư viện gTTS chưa được cài đặt. Vui lòng cài đặt bằng lệnh: pip install gtts")
-        print("Voice sẽ không được tạo cho đến khi bạn cài đặt gTTS.")
+        print(f"{Colors.RED}CẢNH BÁO: Thư viện gTTS chưa được cài đặt. Vui lòng cài đặt bằng lệnh: pip install gtts{Colors.ENDC}")
+        print(f"{Colors.YELLOW}Voice sẽ không được tạo cho đến khi bạn cài đặt gTTS.{Colors.ENDC}")
     
-    print("Chào mừng đến với Trình tạo kịch bản YouTube bằng Gemini!")
-    print("Nhập chủ đề và nhấn Enter để tạo kịch bản YouTube. Nhập 'exit' để thoát.")
-    print("Kịch bản sẽ được định dạng với các phần [tiêu đề] và [nội dung].")
-    print("Phiên bản nâng cấp: Đã tối ưu cho video 20 phút, không giới hạn ký tự")
-    print("Phản hồi mới nhất sẽ được lưu vào file 'responses/gemini_latest_response.txt'.")
+    # Print welcome banner
+    print_welcome_banner()
     
     # Default to not saving timestamp (overwrite files)
     save_with_timestamp = False
     use_content_only = False  # Set to False by default to read entire response
-    
-    if GTTS_AVAILABLE:
-        print("Google Text-to-Speech đã được kích hoạt. Kịch bản sẽ được chuyển thành giọng nói.")
-        print("File âm thanh sẽ được lưu vào thư mục 'audio/gemini_latest_speech.mp3'.")
-        print("Hỗ trợ chuyển đổi văn bản dài không bị giới hạn ký tự.")
-    
-    print("-" * 50)
-    print("Tùy chọn:")
-    print("Nhập 'timestamp on' để lưu file với timestamp duy nhất")
-    print("Nhập 'timestamp off' để ghi đè file cũ (mặc định)")
-    print("Nhập 'content on' để chỉ đọc phần [nội dung]")
-    print("Nhập 'content off' để đọc toàn bộ phản hồi (mặc định)")
-    print("Nhập 'test' để kiểm tra chức năng tạo file âm thanh")
-    print("-" * 50)
+    last_audio_file = None
     
     while True:
-        user_input = input("Chủ đề: ")
+        print_main_menu()
+        user_input = input(f"{Colors.GREEN}Lựa chọn của bạn: {Colors.ENDC}").strip().lower()
         
-        if user_input.lower() in ['exit', 'quit', 'bye']:
-            print("Tạm biệt!")
+        if user_input == 'exit' or user_input == '0':
+            print(f"\n{Colors.CYAN}Cảm ơn bạn đã sử dụng Trình tạo kịch bản YouTube bằng Gemini!{Colors.ENDC}")
             break
+            
+        elif user_input == '1':
+            # Tạo kịch bản mới
+            print(f"\n{Colors.CYAN}=== TẠO KỊCH BẢN MỚI ==={Colors.ENDC}")
+            topic = input(f"{Colors.GREEN}Nhập chủ đề cho kịch bản: {Colors.ENDC}").strip()
+            if not topic:
+                print(f"{Colors.YELLOW}Chủ đề không thể trống. Vui lòng thử lại.{Colors.ENDC}")
+                continue
+                
+            print(f"{Colors.CYAN}Đang tạo kịch bản cho chủ đề: {topic}...{Colors.ENDC}")
+            response = send_to_gemini(gemini_api_key, topic, save_with_timestamp, use_content_only)
+            if response:
+                print(f"{Colors.GREEN}Đã tạo kịch bản thành công!{Colors.ENDC}")
+                # Lưu đường dẫn file audio để phát lại sau này
+                audio_dir = os.path.join(os.getcwd(), "audio")
+                if save_with_timestamp:
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    last_audio_file = os.path.join(audio_dir, f"gemini_latest_speech_{timestamp}.mp3")
+                else:
+                    last_audio_file = os.path.join(audio_dir, "gemini_latest_speech.mp3")
         
-        if user_input.lower() == 'timestamp on':
-            save_with_timestamp = True
-            print("Đã BẬT chế độ timestamp: Mỗi file sẽ được lưu với timestamp duy nhất.")
-            continue
-            
-        if user_input.lower() == 'timestamp off':
-            save_with_timestamp = False
-            print("Đã TẮT chế độ timestamp: File mới sẽ ghi đè phiên bản trước.")
-            continue
-            
-        if user_input.lower() == 'content on':
-            use_content_only = True
-            print("Đã BẬT chế độ chỉ đọc nội dung: Chỉ phần [nội dung] sẽ được chuyển thành giọng nói.")
-            continue
-            
-        if user_input.lower() == 'content off':
-            use_content_only = False
-            print("Đã TẮT chế độ chỉ đọc nội dung: Toàn bộ phản hồi sẽ được chuyển thành giọng nói.")
-            continue
+        elif user_input == '2':
+            # Phát file audio đã tạo
+            if last_audio_file and os.path.exists(last_audio_file):
+                play_audio_file(last_audio_file)
+            else:
+                # Tìm file audio mới nhất
+                audio_dir = os.path.join(os.getcwd(), "audio")
+                if os.path.exists(audio_dir):
+                    audio_files = [os.path.join(audio_dir, f) for f in os.listdir(audio_dir) if f.endswith('.mp3')]
+                    if audio_files:
+                        latest_audio = max(audio_files, key=os.path.getmtime)
+                        last_audio_file = latest_audio
+                        play_audio_file(latest_audio)
+                    else:
+                        print(f"{Colors.YELLOW}Không tìm thấy file audio nào. Hãy tạo kịch bản trước.{Colors.ENDC}")
+                else:
+                    print(f"{Colors.YELLOW}Thư mục audio không tồn tại. Hãy tạo kịch bản trước.{Colors.ENDC}")
         
-        if user_input.lower() == 'test':
-            print("Đang kiểm tra chức năng tạo file âm thanh...")
-            test_text = "Xin chào! Đây là bài kiểm tra chuyển đổi văn bản thành giọng nói bằng Google Text-to-Speech. Nếu bạn có thể nghe thấy thông điệp này, có nghĩa là chức năng đang hoạt động bình thường."
+        elif user_input == '3':
+            # Kiểm tra tính năng âm thanh
+            print(f"\n{Colors.CYAN}=== KIỂM TRA ÂM THANH ==={Colors.ENDC}")
+            print(f"{Colors.CYAN}Đang tạo file âm thanh kiểm tra...{Colors.ENDC}")
+            test_text = "Xin chào! Đây là bản kiểm tra âm thanh của Trình tạo kịch bản YouTube bằng Gemini. Nếu bạn nghe được giọng nói này, tính năng âm thanh đang hoạt động bình thường."
             audio_file = text_to_speech_google(test_text, language='vi', save_timestamp=False)
             if audio_file:
-                print(f"Đã tạo file âm thanh thành công: {audio_file}")
-                print("Vui lòng mở file này để kiểm tra chất lượng giọng nói")
+                last_audio_file = audio_file
+                play_audio_file(audio_file)
+                print(f"{Colors.GREEN}Kiểm tra âm thanh thành công!{Colors.ENDC}")
             else:
-                print("Cảnh báo: Không thể tạo file âm thanh. Xem thông báo lỗi ở trên.")
-            continue
+                print(f"{Colors.RED}Kiểm tra âm thanh thất bại. Xem thông báo lỗi ở trên.{Colors.ENDC}")
+                
+        elif user_input == '4':
+            # Cấu hình
+            print_config_menu()
+            config_choice = input(f"{Colors.GREEN}Lựa chọn của bạn: {Colors.ENDC}").strip().lower()
+            
+            if config_choice == '1':
+                # Timestamp on/off
+                save_with_timestamp = not save_with_timestamp
+                status = "BẬT" if save_with_timestamp else "TẮT"
+                print(f"{Colors.GREEN}Đã {status} chế độ lưu file với timestamp.{Colors.ENDC}")
+                
+            elif config_choice == '2':
+                # Content only on/off
+                use_content_only = not use_content_only
+                status = "BẬT" if use_content_only else "TẮT"
+                print(f"{Colors.GREEN}Đã {status} chế độ chỉ đọc phần [nội dung].{Colors.ENDC}")
+                
+            elif config_choice == '3':
+                # Hiển thị thông tin cấu hình
+                print(f"\n{Colors.CYAN}=== THÔNG TIN CẤU HÌNH HIỆN TẠI ==={Colors.ENDC}")
+                print(f"{Colors.CYAN}Lưu file với timestamp: {'BẬT' if save_with_timestamp else 'TẮT'}{Colors.ENDC}")
+                print(f"{Colors.CYAN}Chỉ đọc phần [nội dung]: {'BẬT' if use_content_only else 'TẮT'}{Colors.ENDC}")
+                print(f"{Colors.CYAN}Đang chạy trên: {'Termux/Android' if is_android else platform.system()}{Colors.ENDC}")
+                if GTTS_AVAILABLE:
+                    print(f"{Colors.GREEN}Thư viện gTTS: Đã cài đặt{Colors.ENDC}")
+                else:
+                    print(f"{Colors.RED}Thư viện gTTS: Chưa cài đặt{Colors.ENDC}")
+                    
+            elif config_choice == '0':
+                # Quay lại menu chính
+                continue
         
-        if user_input.strip():
-            print("Đang tạo kịch bản YouTube...")
-            response = send_to_gemini(gemini_api_key, user_input, save_with_timestamp, use_content_only)
-            print("\n" + response)
-            print("-" * 50)
+        elif user_input == 'timestamp on':
+            save_with_timestamp = True
+            print(f"{Colors.GREEN}Đã BẬT chế độ lưu file với timestamp duy nhất.{Colors.ENDC}")
+            
+        elif user_input == 'timestamp off':
+            save_with_timestamp = False
+            print(f"{Colors.GREEN}Đã TẮT chế độ lưu file với timestamp. File mới sẽ ghi đè file cũ.{Colors.ENDC}")
+            
+        elif user_input == 'content on':
+            use_content_only = True
+            print(f"{Colors.GREEN}Đã BẬT chế độ chỉ đọc phần [nội dung].{Colors.ENDC}")
+            
+        elif user_input == 'content off':
+            use_content_only = False
+            print(f"{Colors.GREEN}Đã TẮT chế độ chỉ đọc phần [nội dung]. Sẽ đọc toàn bộ phản hồi.{Colors.ENDC}")
+            
+        elif user_input == 'test':
+            # Functionality to test voice generation
+            print(f"{Colors.CYAN}Đang tạo file âm thanh kiểm tra...{Colors.ENDC}")
+            test_text = "Xin chào! Đây là bản kiểm tra âm thanh của Trình tạo kịch bản YouTube bằng Gemini. Nếu bạn nghe được giọng nói này, tính năng âm thanh đang hoạt động bình thường."
+            audio_file = text_to_speech_google(test_text, language='vi', save_timestamp=save_with_timestamp)
+            if audio_file:
+                last_audio_file = audio_file
+                play_audio_file(audio_file)
+                print(f"{Colors.GREEN}Kiểm tra âm thanh thành công!{Colors.ENDC}")
+            else:
+                print(f"{Colors.RED}Kiểm tra âm thanh thất bại.{Colors.ENDC}")
+        else:
+            # Treat as topic input
+            topic = user_input
+            print(f"{Colors.CYAN}Đang tạo kịch bản cho chủ đề: {topic}...{Colors.ENDC}")
+            response = send_to_gemini(gemini_api_key, topic, save_with_timestamp, use_content_only)
+            if response:
+                print(f"{Colors.GREEN}Đã tạo kịch bản thành công!{Colors.ENDC}")
+                # Lưu đường dẫn file audio để phát lại sau này
+                audio_dir = os.path.join(os.getcwd(), "audio")
+                if save_with_timestamp:
+                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    last_audio_file = os.path.join(audio_dir, f"gemini_latest_speech_{timestamp}.mp3")
+                else:
+                    last_audio_file = os.path.join(audio_dir, "gemini_latest_speech.mp3")
+        
+        print() # Thêm dòng trống để giao diện đẹp hơn
+
+def print_welcome_banner():
+    """In banner chào mừng với màu sắc"""
+    platform_name = "Termux/Android" if is_android else platform.system()
+    
+    print(f"\n{Colors.CYAN}{'='*60}{Colors.ENDC}")
+    print(f"{Colors.CYAN}{Colors.BOLD}          TRÌNH TẠO KỊCH BẢN YOUTUBE BẰNG GEMINI{Colors.ENDC}")
+    print(f"{Colors.CYAN}{Colors.BOLD}          Phiên bản: 2.0 - Hỗ trợ video 20 phút{Colors.ENDC}")
+    print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}")
+    print(f"{Colors.GREEN}• Tạo kịch bản YouTube dài và chi tiết cho video 20 phút{Colors.ENDC}")
+    print(f"{Colors.GREEN}• Hỗ trợ chuyển văn bản thành giọng nói tiếng Việt{Colors.ENDC}")
+    print(f"{Colors.GREEN}• Đang chạy trên: {platform_name}{Colors.ENDC}")
+    print(f"{Colors.GREEN}• Tệp được lưu vào: responses/ và audio/{Colors.ENDC}")
+    print(f"{Colors.CYAN}{'='*60}{Colors.ENDC}\n")
+
+def print_main_menu():
+    """In menu chính với màu sắc"""
+    print(f"\n{Colors.CYAN}╔══ MENU CHÍNH ══╗{Colors.ENDC}")
+    print(f"{Colors.CYAN}║ {Colors.YELLOW}1{Colors.CYAN} - Tạo kịch bản     ║{Colors.ENDC}")
+    print(f"{Colors.CYAN}║ {Colors.YELLOW}2{Colors.CYAN} - Phát audio       ║{Colors.ENDC}")
+    print(f"{Colors.CYAN}║ {Colors.YELLOW}3{Colors.CYAN} - Kiểm tra âm thanh║{Colors.ENDC}")
+    print(f"{Colors.CYAN}║ {Colors.YELLOW}4{Colors.CYAN} - Cấu hình         ║{Colors.ENDC}")
+    print(f"{Colors.CYAN}║ {Colors.YELLOW}0{Colors.CYAN} - Thoát (exit)     ║{Colors.ENDC}")
+    print(f"{Colors.CYAN}╚═══════════════════╝{Colors.ENDC}")
+    print(f"{Colors.YELLOW}Nhập một chủ đề để tạo kịch bản ngay lập tức{Colors.ENDC}")
+
+def print_config_menu():
+    """In menu cấu hình với màu sắc"""
+    print(f"\n{Colors.CYAN}╔══ MENU CẤU HÌNH ══╗{Colors.ENDC}")
+    print(f"{Colors.CYAN}║ {Colors.YELLOW}1{Colors.CYAN} - Toggle timestamp  ║{Colors.ENDC}")
+    print(f"{Colors.CYAN}║ {Colors.YELLOW}2{Colors.CYAN} - Toggle content    ║{Colors.ENDC}")
+    print(f"{Colors.CYAN}║ {Colors.YELLOW}3{Colors.CYAN} - Xem cấu hình      ║{Colors.ENDC}")
+    print(f"{Colors.CYAN}║ {Colors.YELLOW}0{Colors.CYAN} - Quay lại menu     ║{Colors.ENDC}")
+    print(f"{Colors.CYAN}╚════════════════════╝{Colors.ENDC}")
 
 if __name__ == "__main__":
     main() 
